@@ -21,6 +21,8 @@ from typing import Any, Callable, Optional, TYPE_CHECKING
 from meshcore_hub.common.database import DatabaseManager
 from meshcore_hub.common.health import HealthReporter
 from meshcore_hub.common.mqtt import MQTTClient, MQTTConfig
+from meshcore_hub.collector.letsmesh_decoder import LetsMeshPacketDecoder
+from meshcore_hub.collector.letsmesh_normalizer import LetsMeshNormalizer
 
 if TYPE_CHECKING:
     from meshcore_hub.collector.webhook import WebhookDispatcher
@@ -32,8 +34,11 @@ logger = logging.getLogger(__name__)
 EventHandler = Callable[[str, str, dict[str, Any], DatabaseManager], None]
 
 
-class Subscriber:
+class Subscriber(LetsMeshNormalizer):
     """MQTT Subscriber for collecting and storing MeshCore events."""
+
+    INGEST_MODE_NATIVE = "native"
+    INGEST_MODE_LETSMESH_UPLOAD = "letsmesh_upload"
 
     def __init__(
         self,
@@ -45,6 +50,11 @@ class Subscriber:
         cleanup_interval_hours: int = 24,
         node_cleanup_enabled: bool = False,
         node_cleanup_days: int = 90,
+        ingest_mode: str = INGEST_MODE_NATIVE,
+        letsmesh_decoder_enabled: bool = True,
+        letsmesh_decoder_command: str = "meshcore-decoder",
+        letsmesh_decoder_channel_keys: list[str] | None = None,
+        letsmesh_decoder_timeout_seconds: float = 2.0,
     ):
         """Initialize subscriber.
 
@@ -57,6 +67,11 @@ class Subscriber:
             cleanup_interval_hours: Hours between cleanup runs
             node_cleanup_enabled: Enable automatic cleanup of inactive nodes
             node_cleanup_days: Remove nodes not seen for this many days
+            ingest_mode: Ingest mode ('native' or 'letsmesh_upload')
+            letsmesh_decoder_enabled: Enable external LetsMesh packet decoder
+            letsmesh_decoder_command: Decoder CLI command
+            letsmesh_decoder_channel_keys: Optional channel keys for decrypting group text
+            letsmesh_decoder_timeout_seconds: Decoder CLI timeout
         """
         self.mqtt = mqtt_client
         self.db = db_manager
@@ -79,6 +94,18 @@ class Subscriber:
         self._node_cleanup_days = node_cleanup_days
         self._cleanup_thread: Optional[threading.Thread] = None
         self._last_cleanup: Optional[datetime] = None
+        self._ingest_mode = ingest_mode.lower()
+        if self._ingest_mode not in {
+            self.INGEST_MODE_NATIVE,
+            self.INGEST_MODE_LETSMESH_UPLOAD,
+        }:
+            raise ValueError(f"Unsupported collector ingest mode: {ingest_mode}")
+        self._letsmesh_decoder = LetsMeshPacketDecoder(
+            enabled=letsmesh_decoder_enabled,
+            command=letsmesh_decoder_command,
+            channel_keys=letsmesh_decoder_channel_keys,
+            timeout_seconds=letsmesh_decoder_timeout_seconds,
+        )
 
     @property
     def is_healthy(self) -> bool:
@@ -125,14 +152,34 @@ class Subscriber:
             pattern: Subscription pattern
             payload: Message payload
         """
-        # Parse event from topic
-        parsed = self.mqtt.topic_builder.parse_event_topic(topic)
+        parsed: tuple[str, str, dict[str, Any]] | None
+        if self._ingest_mode == self.INGEST_MODE_LETSMESH_UPLOAD:
+            parsed = self._normalize_letsmesh_event(topic, payload)
+        else:
+            parsed_event = self.mqtt.topic_builder.parse_event_topic(topic)
+            parsed = (
+                (parsed_event[0], parsed_event[1], payload) if parsed_event else None
+            )
+
         if not parsed:
-            logger.warning(f"Could not parse event topic: {topic}")
+            logger.warning(
+                "Could not parse topic for ingest mode %s: %s",
+                self._ingest_mode,
+                topic,
+            )
             return
 
-        public_key, event_type = parsed
-        logger.debug(f"Received event: {event_type} from {public_key[:12]}...")
+        public_key, event_type, normalized_payload = parsed
+        logger.debug("Received event: %s from %s...", event_type, public_key[:12])
+        self._dispatch_event(public_key, event_type, normalized_payload)
+
+    def _dispatch_event(
+        self,
+        public_key: str,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """Route a normalized event to the appropriate handler."""
 
         # Find and call handler
         handler = self._handlers.get(event_type)
@@ -358,10 +405,20 @@ class Subscriber:
             logger.error(f"Failed to connect to MQTT broker: {e}")
             raise
 
-        # Subscribe to all event topics
-        event_topic = self.mqtt.topic_builder.all_events_topic()
-        self.mqtt.subscribe(event_topic, self._handle_mqtt_message)
-        logger.info(f"Subscribed to event topic: {event_topic}")
+        # Subscribe to topics based on ingest mode
+        if self._ingest_mode == self.INGEST_MODE_LETSMESH_UPLOAD:
+            letsmesh_topics = [
+                f"{self.mqtt.topic_builder.prefix}/+/packets",
+                f"{self.mqtt.topic_builder.prefix}/+/status",
+                f"{self.mqtt.topic_builder.prefix}/+/internal",
+            ]
+            for letsmesh_topic in letsmesh_topics:
+                self.mqtt.subscribe(letsmesh_topic, self._handle_mqtt_message)
+                logger.info(f"Subscribed to LetsMesh upload topic: {letsmesh_topic}")
+        else:
+            event_topic = self.mqtt.topic_builder.all_events_topic()
+            self.mqtt.subscribe(event_topic, self._handle_mqtt_message)
+            logger.info(f"Subscribed to event topic: {event_topic}")
 
         self._running = True
 
@@ -429,6 +486,9 @@ def create_subscriber(
     mqtt_password: Optional[str] = None,
     mqtt_prefix: str = "meshcore",
     mqtt_tls: bool = False,
+    mqtt_transport: str = "tcp",
+    mqtt_ws_path: str = "/mqtt",
+    ingest_mode: str = "native",
     database_url: str = "sqlite:///./meshcore.db",
     webhook_dispatcher: Optional["WebhookDispatcher"] = None,
     cleanup_enabled: bool = False,
@@ -436,6 +496,10 @@ def create_subscriber(
     cleanup_interval_hours: int = 24,
     node_cleanup_enabled: bool = False,
     node_cleanup_days: int = 90,
+    letsmesh_decoder_enabled: bool = True,
+    letsmesh_decoder_command: str = "meshcore-decoder",
+    letsmesh_decoder_channel_keys: list[str] | None = None,
+    letsmesh_decoder_timeout_seconds: float = 2.0,
 ) -> Subscriber:
     """Create a configured subscriber instance.
 
@@ -446,6 +510,9 @@ def create_subscriber(
         mqtt_password: MQTT password
         mqtt_prefix: MQTT topic prefix
         mqtt_tls: Enable TLS/SSL for MQTT connection
+        mqtt_transport: MQTT transport protocol (tcp or websockets)
+        mqtt_ws_path: WebSocket path (used when transport=websockets)
+        ingest_mode: Ingest mode ('native' or 'letsmesh_upload')
         database_url: Database connection URL
         webhook_dispatcher: Optional webhook dispatcher for event forwarding
         cleanup_enabled: Enable automatic event data cleanup
@@ -453,6 +520,10 @@ def create_subscriber(
         cleanup_interval_hours: Hours between cleanup runs
         node_cleanup_enabled: Enable automatic cleanup of inactive nodes
         node_cleanup_days: Remove nodes not seen for this many days
+        letsmesh_decoder_enabled: Enable external LetsMesh packet decoder
+        letsmesh_decoder_command: Decoder CLI command
+        letsmesh_decoder_channel_keys: Optional channel keys for decrypting group text
+        letsmesh_decoder_timeout_seconds: Decoder CLI timeout
 
     Returns:
         Configured Subscriber instance
@@ -467,6 +538,8 @@ def create_subscriber(
         prefix=mqtt_prefix,
         client_id=f"meshcore-collector-{unique_id}",
         tls=mqtt_tls,
+        transport=mqtt_transport,
+        ws_path=mqtt_ws_path,
     )
     mqtt_client = MQTTClient(mqtt_config)
 
@@ -483,6 +556,11 @@ def create_subscriber(
         cleanup_interval_hours=cleanup_interval_hours,
         node_cleanup_enabled=node_cleanup_enabled,
         node_cleanup_days=node_cleanup_days,
+        ingest_mode=ingest_mode,
+        letsmesh_decoder_enabled=letsmesh_decoder_enabled,
+        letsmesh_decoder_command=letsmesh_decoder_command,
+        letsmesh_decoder_channel_keys=letsmesh_decoder_channel_keys,
+        letsmesh_decoder_timeout_seconds=letsmesh_decoder_timeout_seconds,
     )
 
     # Register handlers
@@ -500,6 +578,9 @@ def run_collector(
     mqtt_password: Optional[str] = None,
     mqtt_prefix: str = "meshcore",
     mqtt_tls: bool = False,
+    mqtt_transport: str = "tcp",
+    mqtt_ws_path: str = "/mqtt",
+    ingest_mode: str = "native",
     database_url: str = "sqlite:///./meshcore.db",
     webhook_dispatcher: Optional["WebhookDispatcher"] = None,
     cleanup_enabled: bool = False,
@@ -507,6 +588,10 @@ def run_collector(
     cleanup_interval_hours: int = 24,
     node_cleanup_enabled: bool = False,
     node_cleanup_days: int = 90,
+    letsmesh_decoder_enabled: bool = True,
+    letsmesh_decoder_command: str = "meshcore-decoder",
+    letsmesh_decoder_channel_keys: list[str] | None = None,
+    letsmesh_decoder_timeout_seconds: float = 2.0,
 ) -> None:
     """Run the collector (blocking).
 
@@ -517,6 +602,9 @@ def run_collector(
         mqtt_password: MQTT password
         mqtt_prefix: MQTT topic prefix
         mqtt_tls: Enable TLS/SSL for MQTT connection
+        mqtt_transport: MQTT transport protocol (tcp or websockets)
+        mqtt_ws_path: WebSocket path (used when transport=websockets)
+        ingest_mode: Ingest mode ('native' or 'letsmesh_upload')
         database_url: Database connection URL
         webhook_dispatcher: Optional webhook dispatcher for event forwarding
         cleanup_enabled: Enable automatic event data cleanup
@@ -524,6 +612,10 @@ def run_collector(
         cleanup_interval_hours: Hours between cleanup runs
         node_cleanup_enabled: Enable automatic cleanup of inactive nodes
         node_cleanup_days: Remove nodes not seen for this many days
+        letsmesh_decoder_enabled: Enable external LetsMesh packet decoder
+        letsmesh_decoder_command: Decoder CLI command
+        letsmesh_decoder_channel_keys: Optional channel keys for decrypting group text
+        letsmesh_decoder_timeout_seconds: Decoder CLI timeout
     """
     subscriber = create_subscriber(
         mqtt_host=mqtt_host,
@@ -532,6 +624,9 @@ def run_collector(
         mqtt_password=mqtt_password,
         mqtt_prefix=mqtt_prefix,
         mqtt_tls=mqtt_tls,
+        mqtt_transport=mqtt_transport,
+        mqtt_ws_path=mqtt_ws_path,
+        ingest_mode=ingest_mode,
         database_url=database_url,
         webhook_dispatcher=webhook_dispatcher,
         cleanup_enabled=cleanup_enabled,
@@ -539,6 +634,10 @@ def run_collector(
         cleanup_interval_hours=cleanup_interval_hours,
         node_cleanup_enabled=node_cleanup_enabled,
         node_cleanup_days=node_cleanup_days,
+        letsmesh_decoder_enabled=letsmesh_decoder_enabled,
+        letsmesh_decoder_command=letsmesh_decoder_command,
+        letsmesh_decoder_channel_keys=letsmesh_decoder_channel_keys,
+        letsmesh_decoder_timeout_seconds=letsmesh_decoder_timeout_seconds,
     )
 
     # Set up signal handlers

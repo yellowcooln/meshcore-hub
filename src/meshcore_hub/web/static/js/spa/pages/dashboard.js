@@ -1,44 +1,33 @@
 import { apiGet } from '../api.js';
 import {
     html, litRender, nothing,
-    getConfig, typeEmoji, errorAlert, pageColors, t,
+    getConfig, getChannelLabelsMap, resolveChannelLabel,
+    typeEmoji, errorAlert, pageColors, t, formatDateTime,
 } from '../components.js';
 import {
     iconNodes, iconAdvertisements, iconMessages, iconChannel,
 } from '../icons.js';
 
-function formatTimeOnly(isoString) {
-    if (!isoString) return '-';
-    try {
-        const config = getConfig();
-        const tz = config.timezone_iana || 'UTC';
-        const date = new Date(isoString);
-        if (isNaN(date.getTime())) return '-';
-        return date.toLocaleString('en-GB', {
-            timeZone: tz,
-            hour: '2-digit', minute: '2-digit', second: '2-digit',
-            hour12: false,
-        });
-    } catch {
-        return '-';
+function channelLabel(channel, channelLabels) {
+    const idx = parseInt(String(channel), 10);
+    if (Number.isInteger(idx)) {
+        return resolveChannelLabel(idx, channelLabels) || `Ch ${idx}`;
     }
+    return String(channel);
+}
+
+function formatTimeOnly(isoString) {
+    return formatDateTime(isoString, {
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+    });
 }
 
 function formatTimeShort(isoString) {
-    if (!isoString) return '-';
-    try {
-        const config = getConfig();
-        const tz = config.timezone_iana || 'UTC';
-        const date = new Date(isoString);
-        if (isNaN(date.getTime())) return '-';
-        return date.toLocaleString('en-GB', {
-            timeZone: tz,
-            hour: '2-digit', minute: '2-digit',
-            hour12: false,
-        });
-    } catch {
-        return '-';
-    }
+    return formatDateTime(isoString, {
+        hour: '2-digit', minute: '2-digit',
+        hour12: false,
+    });
 }
 
 function renderRecentAds(ads) {
@@ -77,10 +66,11 @@ function renderRecentAds(ads) {
     </div>`;
 }
 
-function renderChannelMessages(channelMessages) {
+function renderChannelMessages(channelMessages, channelLabels) {
     if (!channelMessages || Object.keys(channelMessages).length === 0) return nothing;
 
     const channels = Object.entries(channelMessages).map(([channel, messages]) => {
+        const label = channelLabel(channel, channelLabels);
         const msgLines = messages.map(msg => html`
             <div class="text-sm">
                 <span class="text-xs opacity-50">${formatTimeShort(msg.received_at)}</span>
@@ -89,8 +79,7 @@ function renderChannelMessages(channelMessages) {
 
         return html`<div>
             <h3 class="font-semibold text-sm mb-2 flex items-center gap-2">
-                <span class="badge badge-info badge-sm">CH${String(channel)}</span>
-                ${t('dashboard.channel', { number: String(channel) })}
+                <span class="badge badge-info badge-sm">${label}</span>
             </h3>
             <div class="space-y-1 pl-2 border-l-2 border-base-300">
                 ${msgLines}
@@ -120,6 +109,7 @@ function gridCols(count) {
 export async function render(container, params, router) {
     try {
         const config = getConfig();
+        const channelLabels = getChannelLabelsMap(config);
         const features = config.features || {};
         const showNodes = features.nodes !== false;
         const showAdverts = features.advertisements !== false;
@@ -235,7 +225,7 @@ ${bottomCount > 0 ? html`
         </div>
     </div>` : nothing}
 
-    ${showMessages ? renderChannelMessages(stats.channel_messages) : nothing}
+    ${showMessages ? renderChannelMessages(stats.channel_messages, channelLabels) : nothing}
 </div>` : nothing}`, container);
 
         window.initDashboardCharts(

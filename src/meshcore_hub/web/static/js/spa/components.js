@@ -23,6 +23,65 @@ export function getConfig() {
 }
 
 /**
+ * Build channel label map from app config.
+ * Keys are numeric channel indexes and values are non-empty labels.
+ *
+ * @param {Object} [config]
+ * @returns {Map<number, string>}
+ */
+export function getChannelLabelsMap(config = getConfig()) {
+    return new Map(
+        Object.entries(config.channel_labels || {})
+            .map(([idx, label]) => [parseInt(idx, 10), typeof label === 'string' ? label.trim() : ''])
+            .filter(([idx, label]) => Number.isInteger(idx) && label.length > 0),
+    );
+}
+
+/**
+ * Resolve a channel label from a numeric index.
+ *
+ * @param {number|string} channelIdx
+ * @param {Map<number, string>} [channelLabels]
+ * @returns {string|null}
+ */
+export function resolveChannelLabel(channelIdx, channelLabels = getChannelLabelsMap()) {
+    const parsed = parseInt(String(channelIdx), 10);
+    if (!Number.isInteger(parsed)) return null;
+    return channelLabels.get(parsed) || null;
+}
+
+/**
+ * Parse API datetime strings reliably.
+ * MeshCore API often returns UTC timestamps without an explicit timezone suffix.
+ * In that case, treat them as UTC by appending 'Z' before Date parsing.
+ *
+ * @param {string|null} isoString
+ * @returns {Date|null}
+ */
+export function parseAppDate(isoString) {
+    if (!isoString || typeof isoString !== 'string') return null;
+
+    let value = isoString.trim();
+    if (!value) return null;
+
+    // Normalize "YYYY-MM-DD HH:MM:SS" to ISO separator.
+    if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(value)) {
+        value = value.replace(/\s+/, 'T');
+    }
+
+    // If no timezone suffix is present, treat as UTC.
+    const hasTimePart = /T\d{2}:\d{2}/.test(value);
+    const hasTimezoneSuffix = /(Z|[+-]\d{2}:\d{2}|[+-]\d{4})$/i.test(value);
+    if (hasTimePart && !hasTimezoneSuffix) {
+        value += 'Z';
+    }
+
+    const parsed = new Date(value);
+    if (isNaN(parsed.getTime())) return null;
+    return parsed;
+}
+
+/**
  * Page color palette - reads from CSS custom properties (defined in app.css :root).
  * Use for inline styles or dynamic coloring in page modules.
  */
@@ -42,10 +101,21 @@ export const pageColors = {
  * @param {string|null} advType
  * @returns {string} Emoji character
  */
+function inferNodeType(value) {
+    const normalized = (value || '').toLowerCase();
+    if (!normalized) return null;
+    if (normalized.includes('room')) return 'room';
+    if (normalized.includes('repeater') || normalized.includes('relay')) return 'repeater';
+    if (normalized.includes('companion') || normalized.includes('observer')) return 'companion';
+    if (normalized.includes('chat')) return 'chat';
+    return null;
+}
+
 export function typeEmoji(advType) {
-    switch ((advType || '').toLowerCase()) {
+    switch (inferNodeType(advType) || (advType || '').toLowerCase()) {
         case 'chat': return '\u{1F4AC}';     // 💬
         case 'repeater': return '\u{1F4E1}';  // 📡
+        case 'companion': return '\u{1F4F1}'; // 📱
         case 'room': return '\u{1FAA7}';      // 🪧
         default: return '\u{1F4CD}';          // 📍
     }
@@ -74,7 +144,9 @@ export function extractFirstEmoji(str) {
  */
 export function getNodeEmoji(nodeName, advType) {
     const nameEmoji = extractFirstEmoji(nodeName);
-    return nameEmoji || typeEmoji(advType);
+    if (nameEmoji) return nameEmoji;
+    const inferred = inferNodeType(advType) || inferNodeType(nodeName);
+    return typeEmoji(inferred || advType);
 }
 
 /**
@@ -88,8 +160,9 @@ export function formatDateTime(isoString, options) {
     try {
         const config = getConfig();
         const tz = config.timezone_iana || 'UTC';
-        const date = new Date(isoString);
-        if (isNaN(date.getTime())) return '-';
+        const locale = config.datetime_locale || 'en-US';
+        const date = parseAppDate(isoString);
+        if (!date) return '-';
         const opts = options || {
             timeZone: tz,
             year: 'numeric', month: '2-digit', day: '2-digit',
@@ -97,7 +170,7 @@ export function formatDateTime(isoString, options) {
             hour12: false,
         };
         if (!opts.timeZone) opts.timeZone = tz;
-        return date.toLocaleString('en-GB', opts);
+        return date.toLocaleString(locale, opts);
     } catch {
         return isoString ? isoString.slice(0, 19).replace('T', ' ') : '-';
     }
@@ -113,9 +186,10 @@ export function formatDateTimeShort(isoString) {
     try {
         const config = getConfig();
         const tz = config.timezone_iana || 'UTC';
-        const date = new Date(isoString);
-        if (isNaN(date.getTime())) return '-';
-        return date.toLocaleString('en-GB', {
+        const locale = config.datetime_locale || 'en-US';
+        const date = parseAppDate(isoString);
+        if (!date) return '-';
+        return date.toLocaleString(locale, {
             timeZone: tz,
             year: 'numeric', month: '2-digit', day: '2-digit',
             hour: '2-digit', minute: '2-digit',
@@ -133,8 +207,8 @@ export function formatDateTimeShort(isoString) {
  */
 export function formatRelativeTime(isoString) {
     if (!isoString) return '';
-    const date = new Date(isoString);
-    if (isNaN(date.getTime())) return '';
+    const date = parseAppDate(isoString);
+    if (!date) return '';
     const now = new Date();
     const diffMs = now - date;
     const diffSec = Math.floor(diffMs / 1000);
