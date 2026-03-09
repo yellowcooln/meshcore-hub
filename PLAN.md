@@ -516,6 +516,7 @@ LetsMesh compatibility parity note:
 | WEB_PORT | 8080 | Web bind port |
 | API_BASE_URL | http://localhost:8000 | API endpoint |
 | API_KEY | | API key for queries |
+| WEB_TRUSTED_PROXY_HOSTS | * | Comma-separated list of trusted proxy hosts for admin authentication headers. Default: `*` (all hosts). Recommended: set to your reverse proxy IP in production. |
 | WEB_LOCALE | en | UI translation locale |
 | WEB_DATETIME_LOCALE | en-US | Date formatting locale for UI timestamps |
 | TZ | UTC | Timezone used for UI timestamp rendering |

@@ -180,7 +180,11 @@ def _build_config_json(app: FastAPI, request: Request) -> str:
         "logo_invert_light": app.state.logo_invert_light,
     }
 
-    return json.dumps(config)
+    # Escape "</script>" sequences to prevent XSS breakout from the
+    # <script> block where this JSON is embedded via |safe in the
+    # Jinja2 template.  "<\/" is valid JSON per the spec and parsed
+    # correctly by JavaScript's JSON.parse().
+    return json.dumps(config).replace("</", "<\\/")
 
 
 def create_app(
@@ -236,7 +240,24 @@ def create_app(
     )
 
     # Trust proxy headers (X-Forwarded-Proto, X-Forwarded-For) for HTTPS detection
-    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+    trusted_hosts_raw = settings.web_trusted_proxy_hosts
+    if trusted_hosts_raw == "*":
+        trusted_hosts: str | list[str] = "*"
+    else:
+        trusted_hosts = [h.strip() for h in trusted_hosts_raw.split(",") if h.strip()]
+    app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=trusted_hosts)
+
+    # Compute effective admin flag (parameter overrides setting)
+    effective_admin = (
+        admin_enabled if admin_enabled is not None else settings.web_admin_enabled
+    )
+
+    # Warn when admin is enabled but proxy trust is wide open
+    if effective_admin and settings.web_trusted_proxy_hosts == "*":
+        logger.warning(
+            "WEB_ADMIN_ENABLED is true but WEB_TRUSTED_PROXY_HOSTS is '*' (trust all). "
+            "Consider restricting to your reverse proxy IP for production deployments."
+        )
 
     # Add cache control headers based on resource type
     app.add_middleware(CacheControlMiddleware)
@@ -256,9 +277,7 @@ def create_app(
     )
     app.state.api_url = api_url or settings.api_base_url
     app.state.api_key = api_key or settings.api_key
-    app.state.admin_enabled = (
-        admin_enabled if admin_enabled is not None else settings.web_admin_enabled
-    )
+    app.state.admin_enabled = effective_admin
     app.state.network_name = network_name or settings.network_name
     app.state.network_city = network_city or settings.network_city
     app.state.network_country = network_country or settings.network_country
