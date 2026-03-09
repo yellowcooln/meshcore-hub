@@ -394,6 +394,7 @@ The collector automatically cleans up old event data and inactive nodes:
 | `WEB_DATETIME_LOCALE` | `en-US` | Locale used for date formatting in the web dashboard (e.g., `en-US` for MM/DD/YYYY, `en-GB` for DD/MM/YYYY). |
 | `WEB_AUTO_REFRESH_SECONDS` | `30` | Auto-refresh interval in seconds for list pages (0 to disable) |
 | `WEB_ADMIN_ENABLED` | `false` | Enable admin interface at /a/ (requires auth proxy: `X-Forwarded-User`/`X-Auth-Request-User` or forwarded `Authorization: Basic ...`) |
+| `WEB_TRUSTED_PROXY_HOSTS` | `*` | Comma-separated list of trusted proxy hosts for admin authentication headers. Default: `*` (all hosts). Recommended: set to your reverse proxy IP in production. A startup warning is emitted when using the default `*` with admin enabled. |
 | `TZ` | `UTC` | Timezone for displaying dates/times (e.g., `America/New_York`, `Europe/London`) |
 | `NETWORK_DOMAIN` | *(none)* | Network domain name (optional) |
 | `NETWORK_NAME` | `MeshCore Network` | Display name for the network |

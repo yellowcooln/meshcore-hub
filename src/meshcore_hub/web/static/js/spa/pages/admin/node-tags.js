@@ -2,7 +2,7 @@ import { apiGet, apiPost, apiPut, apiDelete } from '../../api.js';
 import {
     html, litRender, nothing, unsafeHTML,
     getConfig, typeEmoji, formatDateTimeShort, errorAlert,
-    successAlert, truncateKey, t,
+    successAlert, truncateKey, t, escapeHtml,
 } from '../../components.js';
 import { iconTag, iconLock } from '../../icons.js';
 
@@ -240,7 +240,8 @@ export async function render(container, params, router) {
     <div class="modal-box">
         <h3 class="font-bold text-lg">${t('common.copy_all_entity_to_another_node', { entity: t('entities.tags') })}</h3>
         <form id="copy-all-form" class="py-4">
-            <p class="mb-4">${unsafeHTML(t('common.copy_all_entity_description', { count: tags.length, entity: t('entities.tags').toLowerCase(), name: nodeName }))}</p>
+            <!-- unsafeHTML needed for translation HTML tags; nodeName is pre-escaped -->
+            <p class="mb-4">${unsafeHTML(t('common.copy_all_entity_description', { count: tags.length, entity: t('entities.tags').toLowerCase(), name: escapeHtml(nodeName) }))}</p>
             <div class="form-control mb-4">
                 <label class="label"><span class="label-text">${t('admin_node_tags.destination_node')}</span></label>
                 <select id="copyAllDestination" class="select select-bordered w-full" required>
@@ -269,7 +270,8 @@ export async function render(container, params, router) {
     <div class="modal-box">
         <h3 class="font-bold text-lg">${t('common.delete_all_entity', { entity: t('entities.tags') })}</h3>
         <div class="py-4">
-            <p class="mb-4">${unsafeHTML(t('common.delete_all_entity_confirm', { count: tags.length, entity: t('entities.tags').toLowerCase(), name: nodeName }))}</p>
+            <!-- unsafeHTML needed for translation HTML tags; nodeName is pre-escaped -->
+            <p class="mb-4">${unsafeHTML(t('common.delete_all_entity_confirm', { count: tags.length, entity: t('entities.tags').toLowerCase(), name: escapeHtml(nodeName) }))}</p>
             <div class="alert alert-error mb-4">
                 <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                 <span>${t('admin_node_tags.delete_all_warning')}</span>
@@ -449,7 +451,7 @@ ${contentHtml}`, container);
                     activeTagKey = row.dataset.tagKey;
                     const confirmMsg = t('common.delete_entity_confirm', {
                         entity: t('entities.tag').toLowerCase(),
-                        name: `"<span class="font-mono font-semibold">${activeTagKey}</span>"`
+                        name: `"<span class="font-mono font-semibold">${escapeHtml(activeTagKey)}</span>"`
                     });
                     container.querySelector('#delete_tag_confirm_message').innerHTML = confirmMsg;
                     container.querySelector('#deleteModal').showModal();

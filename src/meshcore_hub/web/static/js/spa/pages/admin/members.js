@@ -1,7 +1,7 @@
 import { apiGet, apiPost, apiPut, apiDelete } from '../../api.js';
 import {
     html, litRender, nothing,
-    getConfig, errorAlert, successAlert, t,
+    getConfig, errorAlert, successAlert, t, escapeHtml,
 } from '../../components.js';
 import { iconLock } from '../../icons.js';
 
@@ -304,7 +304,7 @@ ${flashHtml}
                 const memberName = row.dataset.memberName;
                 const confirmMsg = t('common.delete_entity_confirm', {
                     entity: t('entities.member').toLowerCase(),
-                    name: memberName
+                    name: escapeHtml(memberName)
                 });
                 container.querySelector('#delete_confirm_message').innerHTML = confirmMsg;
                 container.querySelector('#deleteModal').showModal();

@@ -35,35 +35,71 @@ class TestDashboardStats:
         assert data["total_advertisements"] == 1
 
 
-class TestDashboardHtml:
-    """Tests for GET /dashboard endpoint."""
+class TestDashboardHtmlRemoved:
+    """Tests that legacy HTML dashboard endpoint has been removed."""
 
-    def test_dashboard_html_response(self, client_no_auth):
-        """Test dashboard returns HTML."""
+    def test_dashboard_html_endpoint_removed(self, client_no_auth):
+        """Test that GET /dashboard no longer returns HTML (legacy endpoint removed)."""
         response = client_no_auth.get("/api/v1/dashboard")
-        assert response.status_code == 200
-        assert "text/html" in response.headers["content-type"]
-        assert "<!DOCTYPE html>" in response.text
-        assert "MeshCore Hub Dashboard" in response.text
+        assert response.status_code in (404, 405)
 
-    def test_dashboard_contains_stats(
-        self, client_no_auth, sample_node, sample_message
-    ):
-        """Test dashboard HTML contains stat values."""
-        response = client_no_auth.get("/api/v1/dashboard")
-        assert response.status_code == 200
-        # Check that stats are present
-        assert "Total Nodes" in response.text
-        assert "Active Nodes" in response.text
-        assert "Total Messages" in response.text
+    def test_dashboard_html_endpoint_removed_trailing_slash(self, client_no_auth):
+        """Test that GET /dashboard/ also returns 404/405."""
+        response = client_no_auth.get("/api/v1/dashboard/")
+        assert response.status_code in (404, 405)
 
-    def test_dashboard_contains_recent_data(self, client_no_auth, sample_node):
-        """Test dashboard HTML contains recent nodes."""
-        response = client_no_auth.get("/api/v1/dashboard")
+
+class TestDashboardAuthenticatedJsonRoutes:
+    """Tests that dashboard JSON sub-routes return valid JSON with authentication."""
+
+    def test_stats_returns_json_when_authenticated(self, client_with_auth):
+        """Test GET /dashboard/stats returns 200 with valid JSON when authenticated."""
+        response = client_with_auth.get(
+            "/api/v1/dashboard/stats",
+            headers={"Authorization": "Bearer test-read-key"},
+        )
         assert response.status_code == 200
-        assert "Recent Nodes" in response.text
-        # The node name should appear in the table
-        assert sample_node.name in response.text
+        data = response.json()
+        assert "total_nodes" in data
+        assert "active_nodes" in data
+        assert "total_messages" in data
+        assert "total_advertisements" in data
+
+    def test_activity_returns_json_when_authenticated(self, client_with_auth):
+        """Test GET /dashboard/activity returns 200 with valid JSON when authenticated."""
+        response = client_with_auth.get(
+            "/api/v1/dashboard/activity",
+            headers={"Authorization": "Bearer test-read-key"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "days" in data
+        assert "data" in data
+        assert isinstance(data["data"], list)
+
+    def test_message_activity_returns_json_when_authenticated(self, client_with_auth):
+        """Test GET /dashboard/message-activity returns 200 with valid JSON when authenticated."""
+        response = client_with_auth.get(
+            "/api/v1/dashboard/message-activity",
+            headers={"Authorization": "Bearer test-read-key"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "days" in data
+        assert "data" in data
+        assert isinstance(data["data"], list)
+
+    def test_node_count_returns_json_when_authenticated(self, client_with_auth):
+        """Test GET /dashboard/node-count returns 200 with valid JSON when authenticated."""
+        response = client_with_auth.get(
+            "/api/v1/dashboard/node-count",
+            headers={"Authorization": "Bearer test-read-key"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "days" in data
+        assert "data" in data
+        assert isinstance(data["data"], list)
 
 
 class TestDashboardActivity:

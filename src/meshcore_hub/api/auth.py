@@ -1,5 +1,6 @@
 """Authentication middleware for the API."""
 
+import hmac
 import logging
 from typing import Annotated
 
@@ -79,7 +80,9 @@ async def require_read(
         )
 
     # Check if token matches any key
-    if token == read_key or token == admin_key:
+    if (read_key and hmac.compare_digest(token, read_key)) or (
+        admin_key and hmac.compare_digest(token, admin_key)
+    ):
         return token
 
     raise HTTPException(
@@ -124,7 +127,7 @@ async def require_admin(
         )
 
     # Check if token matches admin key
-    if token == admin_key:
+    if hmac.compare_digest(token, admin_key):
         return token
 
     raise HTTPException(

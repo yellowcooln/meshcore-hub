@@ -1,6 +1,7 @@
 """Prometheus metrics endpoint for MeshCore Hub API."""
 
 import base64
+import hmac
 import logging
 import time
 from typing import Any
@@ -54,7 +55,9 @@ def verify_basic_auth(request: Request) -> bool:
     try:
         decoded = base64.b64decode(auth_header[6:]).decode("utf-8")
         username, password = decoded.split(":", 1)
-        return username == "metrics" and password == read_key
+        return hmac.compare_digest(username, "metrics") and hmac.compare_digest(
+            password, read_key
+        )
     except Exception:
         return False
 
